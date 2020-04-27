@@ -1,4 +1,4 @@
 #!/bin/sh
 
 export PGDATA=$PWD/db/data
-postgres -F -D $PGDATA -k $PWD/tmp/sockets
+postgres -F -D "$PGDATA" -k "$PWD/tmp/sockets"

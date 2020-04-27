@@ -2,4 +2,4 @@
 
 DATA_DIR=$PWD/db/data
 rm -fr $DATA_DIR
-initdb -D $DATA_DIR
+initdb -D $DATA_DIR -E UTF8 --locale=en_US.utf8
