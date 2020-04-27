@@ -605,6 +605,7 @@ Time: 2.666 ms
 
 * command `\dx+`
 
+`CREATE EXTENSION citext;`
 `DROP EXTENSION citext`;
 
 * /usr/share/pgsql/extension/ : extensions directory
@@ -612,3 +613,78 @@ Time: 2.666 ms
 * /usr/share/pgsql/extension/citext.control : control file for working with extension
 * /usr/share/pgsql/extension/citext--1.4--1.5.sql : upgrade file from v1.4 to v1.5 of the extension
 ```
+
+Sometimes you need to change the query to optimize it instead of depending
+on an index.
+
+```sql
+SELECT * FROM person WHERE age(birthday) < INTERVAL '40 years';
+CREATE INDEX ON person (age(birthday));
+ERROR: functions in index expression must be marked IMMUTABLE
+
+SELECT * FROM person WHERE birthday < current_timestamp - INTERVAL '40 years';
+```
+
+```sql
+SELECT * FROM test WHERE name LIKE '%ephanj%';
+SELECT * FROM test WHERE name LIKE 'zephanj%';
+
+# EXPLAIN SELECT * FROM test WHERE name LIKE 'zephan%';
+                               QUERY PLAN
+------------------------------------------------------------------------
+ Gather  (cost=1000.00..67776.23 rows=1 width=14)
+   Workers Planned: 2
+   ->  Parallel Seq Scan on test  (cost=0.00..66776.12 rows=1 width=14)
+         Filter: (name ~~ 'zephan%'::text)
+(4 rows)
+
+Time: 1.261 ms
+```
+
+Why?
+
+```sql
+# SELECT 'c' < 'd';
+ ?column?
+----------
+ t
+(1 row)
+
+Time: 0.338 ms
+[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+# SELECT 'ch' < 'd';
+ ?column?
+----------
+ t
+(1 row)
+
+Time: 0.344 ms
+[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+# SELECT 'ch' < 'd' COLLATE "cs_CZ.utf8";
+ ?column?
+----------
+ f
+(1 row)
+
+Time: 2.935 ms
+```
+
+* c library or icu library
+
+```sql
+# CREATE INDEX ON test (name text_pattern_ops);
+CREATE INDEX
+Time: 5361.821 ms (00:05.362)
+
+# EXPLAIN SELECT * FROM test WHERE name LIKE 'zephan%';
+                                 QUERY PLAN
+----------------------------------------------------------------------------
+ Index Scan using test_name_idx1 on test  (cost=0.43..8.45 rows=1 width=14)
+   Index Cond: ((name ~>=~ 'zephan'::text) AND (name ~<~ 'zephao'::text))
+   Filter: (name ~~ 'zephan%'::text)
+(3 rows)
+
+Time: 1.377 ms
+```
+
+Use `text_pattern_ops` operator class index for case insensitive search that can leverage an index.
