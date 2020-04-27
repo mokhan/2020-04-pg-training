@@ -329,3 +329,93 @@ index and datafiles.
 
 Time: 0.766 ms
 ```
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id < 1000 ORDER BY id;
+                                 QUERY PLAN
+----------------------------------------------------------------------------
+ Index Scan using test_id_idx on test  (cost=0.43..38.77 rows=991 width=14)
+   Index Cond: (id < 1000)
+(2 rows)
+
+Time: 0.658 ms
+```
+
+* If the order of the index matches the order of the query then this is optimal.
+
+Create index on `name` column
+
+```sql
+CREATE INDEX ON test(name);
+
+# EXPLAIN SELECT * FROM test where name = 'laurenz';
+                           QUERY PLAN
+----------------------------------------------------------------
+ Seq Scan on test  (cost=0.00..112651.20 rows=3146147 width=14)
+   Filter: (name = 'laurenz'::text)
+(2 rows)
+
+Time: 1.250 ms
+```
+
+Set parameter to no use a sequential scan if it can
+
+`SET enable_seqscan = off;`
+`RESET enable_seqscan;`
+
+## Partial indexes
+
+```sql
+DROP INDEX test_name_idx;
+CREATE INDEX ON test(name) WHERE name NOT IN ('laurenz', 'hans');
+```
+
+* Consequently this index only matches for queries that match the WHERE query.
+* smaller index
+* indexes only rows where it's useful to have an index.
+
+Constraint: Excludes certain things from the database.
+
+We want to have a primary key.
+
+```sql
+ALTER TABLE test ADD PRIMARY KEY(id);
+```
+
+An index backing the primary key with a unique constraint.
+
+Soft deletes using `active` true, false.
+Apply unique constraint to active rows only.
+Add a unique constraint for `active` rows and not on others.
+Queries on the `active` rows can be fast.
+This way you don't need a large index on all the rows but on only the rows that need them.
+
+```sql
+SELECT * FROM test WHERE id = 42 AND name = 'zephanja';
+```
+
+`OR` queries makes it harder to use indexes.
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id = 42 OR name = 'zephanja';
+                                    QUERY PLAN
+----------------------------------------------------------------------------------
+ Bitmap Heap Scan on test  (cost=8.88..12.90 rows=1 width=14)
+   Recheck Cond: ((id = 42) OR (name = 'zephanja'::text))
+   ->  BitmapOr  (cost=8.88..8.88 rows=1 width=0)
+         ->  Bitmap Index Scan on test_pkey  (cost=0.00..4.44 rows=1 width=0)
+               Index Cond: (id = 42)
+         ->  Bitmap Index Scan on test_name_idx  (cost=0.00..4.44 rows=1 width=0)
+               Index Cond: (name = 'zephanja'::text)
+(7 rows)
+
+Time: 0.652 ms
+```
+
+Bitmap index scan: What is this?
+
+![bitmap-index-scan](./bitmap-index-scan.png)
+
+Creates a bitmap in memory find matches.
+Then make an OR of the two bitmaps to produce a final bitmap that finds rows that matches both conditions.
+bitmap is orderd in physical order of the database table.
