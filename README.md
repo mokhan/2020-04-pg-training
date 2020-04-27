@@ -157,11 +157,11 @@ CREATE INDEX test_id_idx ON test (id);
 (1 row)
 
 Time: 161.688 ms
-[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+
 # CREATE INDEX test_id_idx ON test (id);
 CREATE INDEX
 Time: 2106.364 ms (00:02.106)
-[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+
 # SELECT * FROM test WHERE id = 42;
  id |  name
 ----+---------
@@ -651,7 +651,7 @@ Why?
 (1 row)
 
 Time: 0.338 ms
-[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+
 # SELECT 'ch' < 'd';
  ?column?
 ----------
@@ -659,7 +659,7 @@ Time: 0.338 ms
 (1 row)
 
 Time: 0.344 ms
-[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/postgres=
+
 # SELECT 'ch' < 'd' COLLATE "cs_CZ.utf8";
  ?column?
 ----------
@@ -688,3 +688,130 @@ Time: 1.377 ms
 ```
 
 Use `text_pattern_ops` operator class index for case insensitive search that can leverage an index.
+
+
+Different ways to index data.
+
+```sql
+# TABLE pg_am;
+ amname |  amhandler  | amtype
+--------+-------------+--------
+ btree  | bthandler   | i
+ hash   | hashhandler | i
+ gist   | gisthandler | i
+ gin    | ginhandler  | i
+ spgist | spghandler  | i
+ brin   | brinhandler | i
+(6 rows)
+
+Time: 0.968 ms
+```
+
+When do you need a different index access method?
+
+`btree` indexes are well understood.
+limitation: can only be used for datatypes that have a total ordering.
+
+There are datatypes where you cannot order them.
+If the data cannot be ordered then it cannot fit into a btree index.
+E.g. composite data types or JSON datatype, geometric data types or points.
+
+```sql
+# SELECT JSONB '{"a": 2, "b": [1, 2, 3]}';
+          jsonb
+--------------------------
+ {"a": 2, "b": [1, 2, 3]}
+(1 row)
+
+Time: 0.330 ms
+
+SELECT point '(10, 20)';
+
+# SELECT ARRAY[1, 2, 3, 55];
+   array
+------------
+ {1,2,3,55}
+(1 row)
+
+Time: 0.313 ms
+```
+
+`gist` and `gin` indexes.
+
+For composite datatypes like json, point, array then use `gin` indexes.
+Weird data types then use `gist` like geometry and time ranges.
+
+
+## JSON data in the database.
+
+```sql
+CREATE TABLE json(id bigint PRIMARY KEY, j json NOT NULL);
+INSERT INTO json VALUES (1, '{"a": 2, "b": [1, 2, 3]}');
+INSERT INTO json VALUES (2, '{"a": false, "b": [4, 5, 6], "extra": "yes"}');
+
+# SELECT j->>'a' FROM json where id = 2;
+ ?column?
+----------
+ false
+(1 row)
+
+Time: 0.779 ms
+
+# SELECT * FROM json WHERE j->>'a' = '2';
+ id |            j
+----+--------------------------
+  1 | {"a": 2, "b": [1, 2, 3]}
+(1 row)
+
+Time: 0.577 ms
+
+# ALTER TABLE json ALTER j TYPE jsonb;
+ALTER TABLE
+Time: 4.560 ms
+
+# SELECT * FROM json WHERE j @> '{"b": [3]}';
+ id |            j
+----+--------------------------
+  1 | {"a": 2, "b": [1, 2, 3]}
+(1 row)
+
+Time: 0.973 ms
+
+# EXPLAIN SELECT * FROM json WHERE j @> '{"b": [3]}';
+                     QUERY PLAN
+-----------------------------------------------------
+ Seq Scan on json  (cost=0.00..1.02 rows=1 width=40)
+   Filter: (j @> '{"b": [3]}'::jsonb)
+(2 rows)
+
+Time: 0.491 ms
+
+# CREATE INDEX ON json USING gin (j);
+CREATE INDEX
+Time: 1.517 ms
+
+
+# SET enable_seqscan = off;
+SET
+Time: 0.238 ms
+
+# EXPLAIN SELECT * FROM json WHERE j @> '{"b": [3]}';
+                                QUERY PLAN
+--------------------------------------------------------------------------
+ Bitmap Heap Scan on json  (cost=12.00..16.01 rows=1 width=40)
+   Recheck Cond: (j @> '{"b": [3]}'::jsonb)
+   ->  Bitmap Index Scan on json_j_idx  (cost=0.00..12.00 rows=1 width=0)
+         Index Cond: (j @> '{"b": [3]}'::jsonb)
+(4 rows)
+
+Time: 0.625 ms
+
+# TABLE json;
+ id |                      j
+----+----------------------------------------------
+  1 | {"a": 2, "b": [1, 2, 3]}
+  2 | {"a": false, "b": [4, 5, 6], "extra": "yes"}
+(2 rows)
+
+Time: 0.376 ms
+```
