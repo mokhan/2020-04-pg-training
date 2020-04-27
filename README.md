@@ -882,3 +882,12 @@ Time: 0.813 ms
 Using a range type can sometimes make it easier to model something.
 Never use strings to store dates or numbers.
 Use a range type to store a range.
+
+* Primary key constraint
+  * only on per table
+  * unique
+  * not null
+* unique constraint
+  * more than one per table allowed
+  * unique
+  * nulls are allowed
