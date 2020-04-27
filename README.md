@@ -262,3 +262,70 @@ To maintain the order of an index, deletes, updates of data rows means
 having to re-order the index. Insert, update and delete statements will
 increase cost to maintain index. Indexes will negatively impact performance
 for insert, update and deletes.
+
+Who is responsible for indexes?
+
+* do not believe this: `dba has to figure out performance bottleneck and figure out correct indexes.`
+* poor dba doesn't understand the data in the table.
+  * doesn't know what the data means.
+  * doesn't know what has to be fast.
+  * in some cases adding an index afterwards cannot improve a bad query.
+* during development make sure to choose good indexes.
+
+What are indexes are useful for?
+
+Library visual
+
+* table is a library of books
+  * each row is a book
+  * shelves are blocks
+* library catalogue: ordered list of books (index)
+
+* index can be used for a '<' condition.
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id < 42;
+                                QUERY PLAN
+--------------------------------------------------------------------------
+ Index Scan using test_id_idx on test  (cost=0.43..9.15 rows=41 width=14)
+   Index Cond: (id < 42)
+(2 rows)
+
+Time: 0.630 ms
+```
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id > 4000000000;
+                               QUERY PLAN
+-------------------------------------------------------------------------
+ Index Scan using test_id_idx on test  (cost=0.43..4.45 rows=1 width=14)
+   Index Cond: (id > '4000000000'::bigint)
+(2 rows)
+
+Time: 0.571 ms
+```
+
+* b-tree indexes can be read in both directions. index wasn't used. why?
+* pg can use the index but chooses not to use the index.
+
+![index-scan](./index-scan.png)
+
+Back and forth between index and table. This is fine when a few rows to scan.
+When a large amount of rows is large. access pattern between heap and index is
+rando I/O. Not as good as sequential I/O. Exceeding a large # of rows means
+it's more efficient to just do a sequential scan rather than go back and forth between
+index and datafiles.
+
+```sql
+# EXPLAIN SELECT min(id) FROM test;
+                                              QUERY PLAN
+------------------------------------------------------------------------------------------------------
+ Result  (cost=0.47..0.48 rows=1 width=8)
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=0.43..0.47 rows=1 width=8)
+           ->  Index Only Scan using test_id_idx on test  (cost=0.43..213123.91 rows=6291456 width=8)
+                 Index Cond: (id IS NOT NULL)
+(5 rows)
+
+Time: 0.766 ms
+```
