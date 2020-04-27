@@ -177,3 +177,88 @@ The db will figure out how to best do that.
 * uuid is 16 bytes wide.
 * nothing wrong with it and go ahead and use it.
 * nice for distributed generation of identifiers.
+
+# query life cycle
+
+1. query is parsed by parser for syntax.
+2. query re-writer.
+3. query planner or query optimizer. (AI component that tries to enumerate or walk through different possible ways to execute query.)
+
+Prepend `EXPLAIN` to query to see execution plan
+
+```sql
+EXPLAIN SELECT * FROM test WHERE id = 42;
+```
+
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id = 42;
+                               QUERY PLAN
+-------------------------------------------------------------------------
+ Index Scan using test_id_idx on test  (cost=0.43..8.45 rows=1 width=14)
+   Index Cond: (id = 42)
+(2 rows)
+
+Time: 0.536 ms
+```
+
+What do #'s mean?
+
+* cost: no meaning in reality. estimate of cost. from how many rows determines how expensize pg thinks it will be.
+* cost=0.43..8.45. initial cost to get first result.. total cost to get all rows.
+* rows=1 how many rows it thinks it will return
+* width=13 estimated with in bytes.
+
+
+`\di+ to describe index`
+
+```sql
+# \dt+ test
+                  List of relations
+ Schema | Name | Type  | Owner |  Size  | Description
+--------+------+-------+-------+--------+-------------
+ public | test | table | mokha | 266 MB |
+(1 row)
+
+
+# \di+ test_id_idx
+                          List of relations
+ Schema |    Name     | Type  | Owner | Table |  Size  | Description
+--------+-------------+-------+-------+-------+--------+-------------
+ public | test_id_idx | index | mokha | test  | 135 MB |
+(1 row)
+```
+
+It made the query faster but we pay a price for having the index.
+
+
+divided into blocks
+
+------------------
+| table rows     | 8K block 0
+------------------
+| 2 |            | 8K block 1
+------------------
+| 1 |            | 8K block 2
+------------------
+
+tables are unordered.
+updates, deletes will change order.
+cannot rely on order of items in the table.
+database table is also called a HEAP.
+It's unordered.
+It's a pile of rows.
+Indexes are a different affair. sorted list of index items
+
+
+Index is kept in order.
+
+-----
+| 1 | ---> points to a physical location of row in a datafile.
+| 2 |
+| 3 |
+
+To maintain the order of an index, deletes, updates of data rows means
+having to re-order the index. Insert, update and delete statements will
+increase cost to maintain index. Indexes will negatively impact performance
+for insert, update and deletes.
