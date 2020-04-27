@@ -419,3 +419,196 @@ Bitmap index scan: What is this?
 Creates a bitmap in memory find matches.
 Then make an OR of the two bitmaps to produce a final bitmap that finds rows that matches both conditions.
 bitmap is orderd in physical order of the database table.
+
+## Multi-column indexes
+
+When is it useful to have multiple columns in an index?
+
+
+```sql
+DROP INDEX test_name_idx;
+ALTER TABLE test DROP CONSTRAINT test_pkey;
+CREATE INDEX ON test(id, name);
+
+# \d test
+                          Table "public.test"
+ Column |  Type  | Collation | Nullable |           Default
+--------+--------+-----------+----------+------------------------------
+ id     | bigint |           | not null | generated always as identity
+ name   | text   |           | not null |
+Indexes:
+    "test_id_name_idx" btree (id, name)
+
+# \di+ test_id_name_idx
+                            List of relations
+ Schema |       Name       | Type  | Owner | Table |  Size  | Description
+--------+------------------+-------+-------+-------+--------+-------------
+ public | test_id_name_idx | index | mokha | test  | 189 MB |
+(1 row)
+
+
+# EXPLAIN SELECT * FROM test WHERE id = 42 AND name = 'zephanja';
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Index Only Scan using test_id_name_idx on test  (cost=0.43..8.45 rows=1 width=14)
+   Index Cond: ((id = 42) AND (name = 'zephanja'::text))
+(2 rows)
+
+Time: 1.605 ms
+```
+
+A multi-column index can still be used by queries that only filter on the first column.
+The index is larger but it still satisfy the needs of the one column and both.
+
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id = 42;
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Index Only Scan using test_id_name_idx on test  (cost=0.43..8.45 rows=1 width=14)
+   Index Cond: (id = 42)
+(2 rows)
+
+Time: 0.447 ms
+```
+
+However, index cannot be used if the secondary column in the index is used as the only item in the query.
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE name = 'zephanja';
+                               QUERY PLAN
+------------------------------------------------------------------------
+ Gather  (cost=1000.00..67776.10 rows=1 width=14)
+   Workers Planned: 2
+   ->  Parallel Seq Scan on test  (cost=0.00..66776.00 rows=1 width=14)
+         Filter: (name = 'zephanja'::text)
+(4 rows)
+
+Time: 0.476 ms
+```
+
+What about?
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id = 42 AND name < 'smith';
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Index Only Scan using test_id_name_idx on test  (cost=0.43..8.45 rows=1 width=14)
+   Index Cond: ((id = 42) AND (name < 'smith'::text))
+(2 rows)
+
+Time: 0.597 ms
+```
+
+Index can use both conditions.
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE id < 42 ORDER BY name;
+                                        QUERY PLAN
+-------------------------------------------------------------------------------------------
+ Sort  (cost=80.25..80.35 rows=41 width=14)
+   Sort Key: name
+   ->  Index Only Scan using test_id_name_idx on test  (cost=0.43..79.15 rows=41 width=14)
+         Index Cond: (id < 42)
+(4 rows)
+
+Time: 0.434 ms
+```
+
+## Expressions
+
+```sql
+# \d test
+                          Table "public.test"
+ Column |  Type  | Collation | Nullable |           Default
+--------+--------+-----------+----------+------------------------------
+ id     | bigint |           | not null | generated always as identity
+ name   | text   |           | not null |
+Indexes:
+    "test_name_idx" btree (name)
+```
+
+Case insensitive search.
+
+one way `WHERE upper(name) = upper('zephanja');`
+
+```sql
+# EXPLAIN SELECT * FROM test WHERE upper(name) = upper('zephanja');
+                                 QUERY PLAN
+----------------------------------------------------------------------------
+ Gather  (cost=1000.00..77475.30 rows=31457 width=14)
+   Workers Planned: 2
+   ->  Parallel Seq Scan on test  (cost=0.00..73329.60 rows=13107 width=14)
+         Filter: (upper(name) = 'ZEPHANJA'::text)
+(4 rows)
+
+Time: 1.444 ms
+```
+
+Index not used.
+
+Create index on expression;
+
+```sql
+CREATE INDEX on test (upper(name));
+
+# EXPLAIN SELECT * FROM test WHERE upper(name) = upper('zephanja');
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Bitmap Heap Scan on test  (cost=592.22..35783.53 rows=31457 width=14)
+   Recheck Cond: (upper(name) = 'ZEPHANJA'::text)
+   ->  Bitmap Index Scan on test_upper_idx  (cost=0.00..584.36 rows=31457 width=0)
+         Index Cond: (upper(name) = 'ZEPHANJA'::text)
+(4 rows)
+
+Time: 1.049 ms
+```
+
+`ANALYZE` command
+
+```sql
+ANALYZE test;
+# EXPLAIN SELECT * FROM test WHERE upper(name) = upper('zephanja');
+                                 QUERY PLAN
+----------------------------------------------------------------------------
+ Index Scan using test_upper_idx on test  (cost=0.43..7.44 rows=1 width=14)
+   Index Cond: (upper(name) = 'ZEPHANJA'::text)
+(2 rows)
+
+Time: 0.909 ms
+```
+
+* postgres: autovacuum launcher
+
+```sql
+# SELECT * FROM pg_stats WHERE tablename = 'test' AND attname = 'name';
+-[ RECORD 1 ]----------+--------------------
+schemaname             | public
+tablename              | test
+attname                | name
+inherited              | f
+null_frac              | 0
+avg_width              | 6
+n_distinct             | 2
+most_common_vals       | {hans,laurenz}
+most_common_freqs      | {0.505233,0.494767}
+histogram_bounds       | [NULL]
+correlation            | 0.503458
+most_common_elems      | [NULL]
+most_common_elem_freqs | [NULL]
+elem_count_histogram   | [NULL]
+
+Time: 2.666 ms
+```
+
+# Extensions
+
+* command `\dx+`
+
+`DROP EXTENSION citext`;
+
+* /usr/share/pgsql/extension/ : extensions directory
+* /usr/share/pgsql/extension/citext--1.4.sql : sql file for citext extension
+* /usr/share/pgsql/extension/citext.control : control file for working with extension
+* /usr/share/pgsql/extension/citext--1.4--1.5.sql : upgrade file from v1.4 to v1.5 of the extension
+```
