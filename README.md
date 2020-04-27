@@ -891,3 +891,30 @@ Use a range type to store a range.
   * more than one per table allowed
   * unique
   * nulls are allowed
+
+NULL is strange.
+```sql
+# SELECT 1 = 1;
+ ?column?
+----------
+ t
+(1 row)
+
+# SELECT 1 = 2;
+ ?column?
+----------
+ f
+(1 row)
+
+# SELECT NULL = NULL;
+ ?column?
+----------
+ [NULL]
+(1 row)
+
+# SELECT 1 <> NULL;
+ ?column?
+----------
+ [NULL]
+(1 row)
+```
