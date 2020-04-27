@@ -815,3 +815,70 @@ Time: 0.625 ms
 
 Time: 0.376 ms
 ```
+
+
+## `gist` index example
+
+```sql
+CREATE TABLE reservation (
+  id bigint PRIMARY KEY,
+  name text NOT NULL,
+  res_from timestamp,
+  res_to timestamp
+);
+
+# Better way is to use a range type
+
+CREATE TABLE reservation (
+  id bigint PRIMARY KEY,
+  name text NOT NULL,
+  res tsrange NOT NULL
+);
+
+INSERT INTO reservation VALUES (1, 'room 1', '[2020-04-24 9:00:00,2020-04-24 12:00:00]');
+
+SELECT * FROM reservation WHERE res && '[2020-04-24 9:00:00,2020-04-24 12:00:00]';
+# EXPLAIN SELECT * FROM reservation WHERE res && '[2020-04-24 9:00:00,2020-04-24 12:00:00]';
+                                   QUERY PLAN
+--------------------------------------------------------------------------------
+ Seq Scan on reservation  (cost=10000000000.00..10000000020.12 rows=8 width=72)
+   Filter: (res && '["2020-04-24 09:00:00","2020-04-24 12:00:00"]'::tsrange)
+(2 rows)
+
+Time: 0.551 ms
+
+# SHOW enable_seqscan;
+ enable_seqscan
+ ----------------
+  off
+  (1 row)
+
+CREATE INDEX ON reservation USING gist (res);
+# EXPLAIN SELECT * FROM reservation WHERE res && '[2020-04-24 9:00:00,2020-04-24 12:00:00]';
+                                       QUERY PLAN
+----------------------------------------------------------------------------------------
+ Index Scan using reservation_res_idx on reservation  (cost=0.12..8.14 rows=1 width=72)
+   Index Cond: (res && '["2020-04-24 09:00:00","2020-04-24 12:00:00"]'::tsrange)
+(2 rows)
+
+Time: 0.774 ms
+```
+
+Add constraint to prevent overlap. Exclusion constraint and it uses gist indexes.
+
+```sql
+ALTER TABLE reservation ADD EXCLUDE USING gist(res WITH &&);
+
+# INSERT INTO reservation VALUES (2, 'room 1', '[2020-04-24 9:00:00,2020-04-24 12:00:00]');
+ERROR:  23P01: conflicting key value violates exclusion constraint "reservation_res_excl"
+DETAIL:  Key (res)=(["2020-04-24 09:00:00","2020-04-24 12:00:00"]) conflicts with existing key (res)=(["2020-04-24 09:00:00","2020-04-24 12:00:00")).
+SCHEMA NAME:  public
+TABLE NAME:  reservation
+CONSTRAINT NAME:  reservation_res_excl
+LOCATION:  check_exclusion_or_unique_constraint, execIndexing.c:827
+Time: 0.813 ms
+```
+
+Using a range type can sometimes make it easier to model something.
+Never use strings to store dates or numbers.
+Use a range type to store a range.
