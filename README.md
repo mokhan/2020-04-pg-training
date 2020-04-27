@@ -70,3 +70,20 @@ $ pg_ctl -D /home/mokha/development/2020-04-pg-training/db/data -l logfile start
   * good isolation
 
 * `psql` is a command line client for connecting to the server.
+  * 4 bits of info needed
+    * host: -h
+    * port: -p
+    * database: -d
+    * user: -U
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres
+```
+
+How to quit:
+  * \q
+  * ^d
+
+* \ -> command for the client
+* everything else is sent to SQL interpreter
+* version 11 supports `exit`
