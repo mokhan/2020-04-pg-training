@@ -918,3 +918,288 @@ NULL is strange.
  [NULL]
 (1 row)
 ```
+
+## Trigram indexes
+
+
+```sql
+CREATE EXTENSION pg_trgm;
+
+# \do %
+                               List of operators
+   Schema   | Name | Left arg type | Right arg type | Result type | Description
+------------+------+---------------+----------------+-------------+-------------
+ pg_catalog | %    | bigint        | bigint         | bigint      | modulus
+ pg_catalog | %    | integer       | integer        | integer     | modulus
+ pg_catalog | %    | numeric       | numeric        | numeric     | modulus
+ pg_catalog | %    | smallint      | smallint       | smallint    | modulus
+ public     | %    | text          | text           | boolean     |
+(5 rows)
+
+# SELECT * FROM test WHERE name % 'zefanja';
+ id | name
+----+------
+(0 rows)
+
+Time: 2683.199 ms (00:02.683)
+
+CREATE INDEX ON test USING gin (name gin_trgm_ops);
+
+# SELECT * FROM test WHERE name % 'zefanja';
+ id | name
+----+------
+(0 rows)
+
+Time: 0.685 ms
+
+# EXPLAIN SELECT * FROM test WHERE name % 'zefanja';
+                                    QUERY PLAN
+----------------------------------------------------------------------------------
+ Bitmap Heap Scan on test  (cost=2724.76..18729.70 rows=6291 width=14)
+   Recheck Cond: (name % 'zefanja'::text)
+   ->  Bitmap Index Scan on test_name_idx  (cost=0.00..2723.19 rows=6291 width=0)
+         Index Cond: (name % 'zefanja'::text)
+(4 rows)
+
+Time: 0.555 ms
+```
+
+We can use a trigram index to match like queries with a % that doesn't start
+at the beginning of the search expression. We can also use the regex operator (~)
+to match results.
+
+```SQL
+SELECT show_trgm('zephanja');
+```
+
+Two strings are similar if they share many trigrams.
+
+Best to limit to 3 or more characters in search. Otherwise the trigram search
+is not useful.
+
+## Bloom indexes
+
+* skipped
+
+## Transactions and things that are related to them
+
+Transactional guarantees or features that databases provide for you.
+
+* A - atomicity
+* C - consistency
+* I - isolation
+* D - durability - stays committed
+
+We haven't used trx explicitly but pg is always running in auto commit mode.
+By default each statement will run in it's own transaction.
+
+```sql
+# standards way
+START TRANSACTION;
+
+# pg specific way
+BEGIN;
+COMMIT;
+ROLLBACK;
+```
+
+Transactional DDL (data definition language).
+Not all databases support this.
+
+```sql
+BEGIN;
+DROP TABLE test;
+# We haven't commited yet.
+ROLLBACK;
+# table is back.
+```
+
+Errors in transactions will fail the entire transaction.
+
+```sql
+BEGIN;
+SELECT 42;
+SELECT 1/0;
+SELECT 42;
+ERROR:  25P02: current transaction is aborted, commands ignored until end of transaction block
+
+# error in transaction causes transaction to be stale
+```
+
+Try to have short transactions. Sometimes you may need large transactions for
+bulk loading or batch transactions.
+
+You can create SAVEPOINTS to save things within a large transaction.
+
+```sql
+BEGIN;
+SELECT 42;
+SAVEPOINT a;
+SELECT 1/0;
+SELECT 42;
+ERROR:  25P02: current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK TO SAVEPOINT a;
+SELECT 42;
+COMMIT;
+```
+
+Avoid using `SAVEPOINT` too much. As soon as you have more than 64 subtransactions
+then this spills to disk and then performance goes down the drain.
+
+To view the `psql` client settings. (not server)
+
+```sql
+# \set
+AUTOCOMMIT = 'on'
+COMP_KEYWORD_CASE = 'upper'
+DBNAME = 'postgres'
+ECHO = 'none'
+ECHO_HIDDEN = 'off'
+ENCODING = 'UTF8'
+FETCH_COUNT = '0'
+HISTCONTROL = 'ignoredups'
+HISTFILE = '~/.psql_history-postgres'
+HISTSIZE = '500'
+HOST = '/home/mokha/development/2020-04-pg-training/tmp/sockets'
+IGNOREEOF = '0'
+LASTOID = '0'
+ON_ERROR_ROLLBACK = 'off'
+ON_ERROR_STOP = 'off'
+PORT = '5432'
+PROMPT1 = '%[%033[1m%]%M/%/%R%[%033[0m%]%
+# '
+PROMPT2 = ''
+PROMPT3 = '>> '
+QUIET = 'off'
+SERVER_VERSION_NAME = '10.10'
+SERVER_VERSION_NUM = '100010'
+SHOW_CONTEXT = 'errors'
+SINGLELINE = 'off'
+SINGLESTEP = 'off'
+USER = 'mokha'
+VERBOSITY = 'verbose'
+VERSION = 'PostgreSQL 10.10 on x86_64-redhat-linux-gnu, compiled by gcc (GCC) 9.1.1 20190605 (Red Hat 9.1.1-2), 64-bit'
+VERSION_NAME = '10.10'
+VERSION_NUM = '100010'
+extensions = 'select * from pg_available_extensions;'
+version = 'SELECT version();'
+```
+
+Be careful with the `ON_ERROR_ROLLBACK` option specified in the client configuration.
+This can have unintended side affects.
+
+```sql
+# CREATE TABLE account (id bigint PRIMARY KEY, name text NOT NULL, amount numeric(10,2) NOT NULL);
+# \d account
+                 Table "public.account"
+ Column |     Type      | Collation | Nullable | Default
+--------+---------------+-----------+----------+---------
+ id     | bigint        |           | not null |
+ name   | text          |           | not null |
+ amount | numeric(10,2) |           | not null |
+Indexes:
+    "account_pkey" PRIMARY KEY, btree (id)
+```
+
+`numeric` datatype.
+
+```sql
+# SELECT DOUBLE PRECISION '3.14';
+ float8
+--------
+   3.14
+(1 row)
+
+# SELECT REAL '3.14';
+ float4
+--------
+   3.14
+
+# SELECT NUMERIC '3.14';
+ numeric
+---------
+    3.14
+```
+
+* `float8`, `float4` are 8,4 byte binary. So they are fast but not precise.
+* `numeric` is a binary coded decimal and more precise. Better for precision but slower. (e.g. money)
+
+```sql
+INSERT INTO account VALUES(1, 'laurenz', 1000);
+INSERT INTO account VALUES(2, 'george', 1000);
+# TABLE account;
+ id |  name   | amount
+----+---------+---------
+  1 | laurenz | 1000.00
+  2 | george  | 1000.00
+(2 rows)
+
+UPDATE account SET amount = amount - 100 WHERE id = 1;
+UPDATE 1
+UPDATE account SET amount = amount + 100 WHERE id = 2;
+# simulate a crash or power failure
+
+
+BEGIN;
+UPDATE account SET amount = amount - 100 WHERE id = 1;
+# not committed yet
+UPDATE account SET amount = amount + 100 WHERE id = 2;
+# crash will rollback change
+COMMIT;
+# commited
+```
+
+Use a `transaction` to rollback the full change or it will get rolled back if it is not committed.
+
+Two different sessions are isolated from each other. A transaction that is only partly
+done is not visible to another connection. Within the transaction you can see the new
+state of the data. Outside of the transaction you can see the old value. The readers
+outside of the transaction are protected from uncommited change.
+Readers never block writers and writers never block readers. :magic:
+
+What happens if I try to update that account while another transaction is open elsewhere?
+
+Now it's not as easy to uphold the illusion. It will block the write by using a row lock.
+Data modifying statement will take an exclusive lock on the row. This is compatible with
+a read but another update will need to take an exclusive lock.
+
+* Read committed is the default isolation level.
+* You never see any dirty reads. Or see data from uncommitted transactions.
+
+```sql
+BEGIN;
+SELECT amount FROM account WHERE id = 2;
+UPDATE account SET amount = 10300 WHERE id = 2;
+
+# from another connection
+RESET lock_timeout;
+UPDATE account SET amount = 10300 WHERE id = 2; # will block because of the other trx in another connection
+```
+
+## Pessimistic locking
+
+```sql
+SELECT amount from account WHERE id = 2 FOR UPDATE; # pessimisstic lock on row
+```
+
+`FOR UPDATE`: all the selected rows will be locked. Lots of locking if joins are involved.
+`FOR UPDATE of account`: will lock only rows in the `account` table.
+`FOR UPDATE NOWAIT`: it wont wait at all. It gets the lock immediately or fails immediately.
+`FOR UPDATE SKIP LOCKED`: appears as if the row does not exist. (weird) useful for implementing something like a queue in the database.
+
+```sql
+SELECT * from jobs LIMIT 1 FOR UPDATE SKIP LOCKED; # fetch next item from a queue of jobs
+```
+
+## Optimistic Locking
+
+4 isolation levels:
+
+* read uncommitted
+* read committed
+* repeatable read
+* serializable
+
+Isolation level: repeatable read
+
+![isolation-levels](isolation-levels.png)
