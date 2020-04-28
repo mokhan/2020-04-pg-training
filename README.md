@@ -1412,3 +1412,135 @@ Do the update in batches and run the vacuum explicitly, to free the data as
 needed rather than waiting for the vacuum process to pick it up.
 
 ![vacuum](vacuum.png)
+
+Every table has a companion called the visibility map.
+This map is small and contains only two bits for each 8k block of the table.
+It tells us if all items in the block is visible to all transactions.
+
+An index scan will check the visibility map which is always cached in
+memory to consult the two bits for the block to know that all entries
+in the block is visible. This allows us to know that all entries in the
+block is usable. One necessary pre-requisite is that most of the blocks
+must be visible. Vacuum has a side job to maintain the visibility map.
+Vacuum looks at all the table rows and removes the non visible ones.
+
+```sql
+EXPLAIN (ANALYZE) SELECT id FROM test WHERE id < 10000;
+```
+
+## Auto vacuum configuration
+
+```sql
+ALTER TABLE account SET (autovacuum_vacuum_scale_factor = 0.01);
+
+SHOW log_autovacuum_min_duration;
+\d pg_stat_all_tables; # wealth of info about the tables
+```
+
+If we update a row, that creates a new row version which is probably in another block.
+We need to create a new index entry that points to a new table block.
+One update can dirty 3 blocks with dead tuples.
+
+Optimization:
+
+* create new entry in the same block and link old entry to the new entry. HOT heap only tuple.
+* nice to only touch one block, also need to touch index because it points to old row, then find pointer to new entry in the same block file.
+
+```sql
+CREATE TABLE hot(id bigint PRIMARY KEY, val text) WITH (fillfactor = 70); # only insert into block files with at least 30% free space.
+```
+
+pg was originally written in lisp as a research project.
+
+## Functions
+
+One of the ways where pg shows how wonderfully extensible it is.
+
+```sql
+# CREATE EXTENSION<tab>
+adminpack           dict_xsyn           intagg              pgcrypto            sslinfo
+amcheck             earthdistance       intarray            pg_freespacemap     tablefunc
+autoinc             file_fdw            isn                 pg_prewarm          tcn
+bloom               fuzzystrmatch       lo                  pgrowlocks          timetravel
+btree_gin           hstore              ltree               pg_stat_statements  tsm_system_rows
+btree_gist          hstore_plperl       ltree_plpython2u    pgstattuple         tsm_system_time
+chkpass             hstore_plperlu      ltree_plpython3u    pg_trgm             unaccent
+citext              hstore_plpython2u   ltree_plpythonu     pg_visibility       "uuid-ossp"
+cube                hstore_plpython3u   moddatetime         postgres_fdw        xml2
+dblink              hstore_plpythonu    pageinspect         refint
+dict_int            insert_username     pg_buffercache      seg
+```
+
+You can write stored procedures in perl, python, tcl, c or sql.
+
+```sql
+# \h CREATE LANGUAGE
+Command:     CREATE LANGUAGE
+Description: define a new procedural language
+Syntax:
+CREATE [ OR REPLACE ] [ PROCEDURAL ] LANGUAGE name
+CREATE [ OR REPLACE ] [ TRUSTED ] [ PROCEDURAL ] LANGUAGE name
+    HANDLER call_handler [ INLINE inline_handler ] [ VALIDATOR valfunction ]
+```
+
+```sql
+# \h CREATE FUNCTION
+Command:     CREATE FUNCTION
+Description: define a new function
+Syntax:
+CREATE [ OR REPLACE ] FUNCTION
+    name ( [ [ argmode ] [ argname ] argtype [ { DEFAULT | = } default_expr ] [, ...] ] )
+    [ RETURNS rettype
+      | RETURNS TABLE ( column_name column_type [, ...] ) ]
+  { LANGUAGE lang_name
+    | TRANSFORM { FOR TYPE type_name } [, ... ]
+    | WINDOW
+    | IMMUTABLE | STABLE | VOLATILE | [ NOT ] LEAKPROOF
+    | CALLED ON NULL INPUT | RETURNS NULL ON NULL INPUT | STRICT
+    | [ EXTERNAL ] SECURITY INVOKER | [ EXTERNAL ] SECURITY DEFINER
+    | PARALLEL { UNSAFE | RESTRICTED | SAFE }
+    | COST execution_cost
+    | ROWS result_rows
+    | SET configuration_parameter { TO value | = value | FROM CURRENT }
+    | AS 'definition'
+    | AS 'obj_file', 'link_symbol'
+  } ...
+    [ WITH ( attribute [, ...] ) ]
+```
+
+
+A function always returns something.
+You must specify which language you would like to use.
+A function always runs in the back end as the postgres operating system user.
+It could delete files on the database server and other things that are not so nice.
+This can be potentially unsafe. Languages are divided into trusted and untrusted languages.
+
+```sql
+CREATE FUNCTION doubleme(i integer) RETURNS integer LANUGAGE sql AS 'SELECT i * 2';
+SELECT doubleme(21);
+```
+
+We can also have a function that returns more than one value by specifying `in` and `out` parameters.
+
+```sql
+CREATE FUNCTION another (IN i integer, OUT x integer, OUT y integer) RETURNS record LANGUAGE sql AS 'SELECT i, i + 5';
+# SELECT another(2);
+ another
+---------
+ (2,7)
+
+```
+
+Or return a set of records.
+
+```sql
+CREATE FUNCTION tabf (IN i integer, OUT x integer, OUT y integer) RETURNS SETOF record LANGUAGE sql AS 'SELECT i, j FROM generate_series(1, i) AS j';
+# SELECT * from tabf(5);
+ x | y
+---+---
+ 5 | 1
+ 5 | 2
+ 5 | 3
+ 5 | 4
+ 5 | 5
+```
