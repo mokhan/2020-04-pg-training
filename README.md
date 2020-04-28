@@ -1200,6 +1200,215 @@ SELECT * from jobs LIMIT 1 FOR UPDATE SKIP LOCKED; # fetch next item from a queu
 * repeatable read
 * serializable
 
+![isolation-levels](isolation-levels.png)
+
 Isolation level: repeatable read
 
-![isolation-levels](isolation-levels.png)
+Will make sure that you continue to see the stale read within a transaction if
+the same row was modified and committed in another transaction.
+
+```sql
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT amount FROM account WHERE id = 2;
+UPDATE account SET amount = 100 WHERE id = 2;
+```
+
+Pessimistic locking means blocking and taking more locks. Optimistic locking
+means retrying a transaction when a collision occurs.
+
+### How does Postgresql do this?
+
+```sql
+SELECT * FROM account;
+SELECT ctid, xmin, xmax, * FROM account;
+
+# SELECT ctid, xmin, xmax, * FROM account;
+ ctid  | xmin | xmax | id |  name   | amount
+-------+------+------+----+---------+---------
+ (0,2) |  616 |    0 |  2 | george  | 1000.00
+ (0,3) |  617 |    0 |  1 | laurenz |  900.00
+(2 rows)
+
+Time: 0.432 ms
+
+```
+
+* ctid: physical location of table row. (number of 8 block,entry in the block) (0,2) => 0 block, entry 2.
+
+Instead of modifying an existing row, it creates a new row and leaves the original row in place.
+This allows stale readers to continue to read from the old location. Who sees what is the difference.
+`xmin` and `xmax` determines who sees what. Every modification is assigned a transaction id
+
+```sql
+Time: 2.664 ms
+[local:/home/mokha/development/2020-04-pg-training/tmp/sockets]/course=
+# SELECT ctid, xmin, xmax, * FROM account;
+ ctid  | xmin | xmax | id |  name   | amount
+-------+------+------+----+---------+---------
+ (0,2) |  616 |    0 |  2 | george  | 1000.00
+ (0,3) |  617 |    0 |  1 | laurenz |  900.00
+(2 rows)
+
+Time: 0.370 ms
+
+# SELECT txid_current();
+ txid_current
+--------------
+          618
+(1 row)
+
+```
+
+* xmin: id of transaction that introduced the row
+* xmax: id of transaction that invalidated the row. (0) means it's not invalidated and still in use.
+
+Commit log is stored on disk.
+Commit log has the id of each transaction and provides the current state of the transaction.
+
+## Locks
+
+* table level locks
+* row level locks
+
+* `CREATE INDEX CONCURRENTLY`
+
+How to view locks:
+
+```sql
+BEGIN;
+TRUNCATE account;
+
+# SELECT pg_backend_pid();
+ pg_backend_pid
+----------------
+        1827882
+(1 row)
+
+Time: 2.159 ms
+
+# SELECT * FROM pg_locks WHERE pid = 1827882;
+SELECT oid FROM pg_class WHERE relname = 'account';
+
+# SELECT oid FROM pg_class WHERE relname = 'account';
+  oid
+-------
+ 16588
+(1 row)
+
+SELECT 16588::oid::regclass;
+
+# SELECT 16588::oid::regclass;
+ regclass
+----------
+ account
+(1 row)
+
+Time: 0.224 ms
+
+SELECT relation::regclass, mode from pg_locks where pid = 1827882;
+
+# SELECT relation::regclass, mode from pg_locks where pid = 1827882;
+             relation              |        mode
+-----------------------------------+---------------------
+ pg_class_tblspc_relfilenode_index | AccessShareLock
+ pg_class_relname_nsp_index        | AccessShareLock
+ pg_class_oid_index                | AccessShareLock
+ pg_class                          | AccessShareLock
+ pg_locks                          | AccessShareLock
+ [NULL]                            | ExclusiveLock
+ account                           | AccessShareLock
+ account                           | ShareLock
+ account                           | AccessExclusiveLock
+ pg_toast.pg_toast_16588           | ShareLock
+ pg_toast.pg_toast_16588           | AccessExclusiveLock
+ pg_toast.pg_toast_16588_index     | AccessExclusiveLock
+ [NULL]                            | ExclusiveLock
+ account_pkey                      | AccessShareLock
+ account_pkey                      | AccessExclusiveLock
+(15 rows)
+
+Time: 0.662 ms
+```
+
+Let's create a deadlock.
+
+session1
+
+```sql
+BEGIN;
+UPDATE account SET amount = amount + 100 WHERE id = 1;
+# switch to session 2
+UPDATE account SET amount = amount - 100 WHERE id = 2;
+```
+
+session2
+
+```sql
+BEGIN;
+UPDATE account SET amount = amount + 100 WHERE id = 2;
+UPDATE account SET amount = amount - 100 WHERE id = 1;
+# switch to session 1
+```
+
+pg runs a deadlock detector that will abort one of the transactions to remove
+the deadlock. The other transaction is unaware that the other transaction was aborted.
+
+Bow and array analogy. 1 person grabs bow and the other person grabs the arrow.
+
+
+```sql
+CREATE TABLE guard_on_duty(prison text NOT NULL, guard text NOT NULL);
+
+INSERT INTO guard_on_duty VALUES('alcatraz', 'alice');
+INSERT INTO guard_on_duty VALUES('alcatraz', 'bob');
+INSERT INTO guard_on_duty VALUES('st. quentin', 'joe');
+
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT COUNT(*) from guard_on_duty where prison = 'alcatraz';
+```
+
+
+```sql
+CREATE TABLE parent(pid integer PRIMARY KEY);
+INSERT into parent VALUES (1), (2);
+
+CREATE TABLE child(cid integer not null, pid integer not null);
+INSERT INTO child SELECT i, 1 FROM generate_series(1, 1000000) AS i;
+
+SELECT * FROM generate_series(1, 10);
+
+ALTER TABLE child ADD FOREIGN KEY (pid) REFERENCES parent;
+
+BEGIN;
+DELETE FROM parent WHERE pid = 1;
+EXPLAIN (ANALYZE) DELETE FROM parent WHERE pid = 2; # ANALYZE actually runs delete
+```
+
+Foreign key constraints are implemented with triggers in pg.
+You should also create an index on the foreign key constraint.
+
+## Vacuum
+
+```sql
+VACUUM (VERBOSE) account;
+```
+
+`autovacuum launcher` process starts the vacuum jobs when it detects
+a certain percentage of the table are dead rows. It doesn't make
+the table smaller, it becomes emptier. It does impact runtime operations.
+
+```sql
+SELECT ctid, xmin, xmax * FROM account;
+```
+
+Bulk operations are a good reason to run a manual vacuum.
+E.g.
+
+```sql
+UPDATE account SET amount = 0; # this creates a new entry for every row in the db.
+```
+
+Do the update in batches and run the vacuum explicitly, to free the data as
+needed rather than waiting for the vacuum process to pick it up.
+
+![vacuum](vacuum.png)
