@@ -1928,3 +1928,24 @@ END;
 * transaction log -> wal -> write ahead log
 * read the block from shared buffers.
 * the transaction log is used to repair a database after a crash.
+
+Some databases use a technique known as direct i/o which skips the operating
+system. pg issues a write to the kernel. So just because it sent a
+write to the kernel doesn't mean that it has hit the iron.
+
+`fsync` is necessary to flush to disk.
+
+
+Example:
+
+
+```sql
+CREATE TABLE waltest (id integer);
+
+-- x 30K
+INSERT INTO waltest VALUES(1);
+```
+Without an explicit transaction then it will create an implicit
+transaction for each insert statement which will call `fsync`
+for each transaction which is slow and will bottleneck on I/O.
+It's better to wrap in a transaction to fsync once rather than 30K times.
