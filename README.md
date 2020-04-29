@@ -2021,3 +2021,28 @@ EXPLAIN id, count(*) FROM mem GROUP BY id;
 
 Larger `work_mem` can make some queries operate faster.
 Sorting rows in memory is faster than having to spill to disk.
+
+Too many idle connections is a risk because if those idle connections become active
+then this can overwhelm the resources available.
+
+Try to keep `max_connections` down. How? use a connection pooler
+
+![connection pooler](connection-pooler.png)
+
+
+```text
+| app | app | app |
+------------------
+| pool|pool| pool | <- not needed anymore with a connection pooler
+------------------
+ | | | | | | | | |
+ | | | | | | | | |
+---------------------
+| connection pooler | <- re-use connections
+---------------------
+     | | |
+     | | |
+   ----------
+   |   db   | <- limit the # of connections
+   ----------
+```
