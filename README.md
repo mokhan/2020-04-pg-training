@@ -1984,8 +1984,16 @@ FROM pg_buffercache GROUP BY 1 ORDER BY 1;
 ```
 
 * `huge_pages = try` is good to use on linux.
-* `work_mem`
+* `work_mem` default is 4MB.
+* `max_connections` has a default of 100. This can be a rather high default.
 
+```text
+RAM >= shared_buffers + (work_mem * max_connections)
+```
+
+If you're generous with `max_connections` then you cannot be generous with `work_mem`
+but `work_mem` has value in performing queries faster. If you can lower `max_connections`
+then you can increase `work_mem` which will serve those connections faster.
 
 ```sql
 CREATE TABLE mem (id serial, name text);
