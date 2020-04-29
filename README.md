@@ -1544,3 +1544,247 @@ CREATE FUNCTION tabf (IN i integer, OUT x integer, OUT y integer) RETURNS SETOF 
  5 | 4
  5 | 5
 ```
+
+## Functions Part ||
+
+When to use it? When to not?
+
+* You can write code in the database or you can do it in the client in your program or application.
+* Should we put code in the database or not?
+  * No extreme is totally right.
+  * It depends on what you prefer to be dependent on.
+* Triggers are run when specific actions occur in the database. It's guaranteed to run.
+  * always runs in the same transaction as the statement that triggers it.
+
+```sql
+# \h CREATE FUNCTION
+Command:     CREATE FUNCTION
+Description: define a new function
+Syntax:
+CREATE [ OR REPLACE ] FUNCTION
+    name ( [ [ argmode ] [ argname ] argtype [ { DEFAULT | = } default_expr ] [, ...] ] )
+    [ RETURNS rettype
+      | RETURNS TABLE ( column_name column_type [, ...] ) ]
+  { LANGUAGE lang_name
+    | TRANSFORM { FOR TYPE type_name } [, ... ]
+    | WINDOW
+    | IMMUTABLE | STABLE | VOLATILE | [ NOT ] LEAKPROOF
+    | CALLED ON NULL INPUT | RETURNS NULL ON NULL INPUT | STRICT
+    | [ EXTERNAL ] SECURITY INVOKER | [ EXTERNAL ] SECURITY DEFINER
+    | PARALLEL { UNSAFE | RESTRICTED | SAFE }
+    | COST execution_cost
+    | ROWS result_rows
+    | SET configuration_parameter { TO value | = value | FROM CURRENT }
+    | AS 'definition'
+    | AS 'obj_file', 'link_symbol'
+  } ...
+    [ WITH ( attribute [, ...] ) ]
+```
+
+* AS `definition`.
+
+The code is always a string constant for a function.
+
+```sql
+CREATE FUNCTION hello() RETURNS text LANGUAGE sql AS 'SELECT 'hello world'';
+# to escape double the single quotes
+CREATE FUNCTION hello() RETURNS text LANGUAGE sql AS 'SELECT ''hello world''';
+# but this is cumbersome. another way to quote string is to sue $ quoting.
+SELECT $abc$hello$abc$;
+SELECT $abc$hello' $_$string$_$$abc$;
+CREATE FUNCTION hello() RETURNS text LANGUAGE sql AS $$SELECT 'hello world'$$;
+CREATE OR REPLACE FUNCTION hello() RETURNS text LANGUAGE sql AS $$SELECT 'hello world'$$;
+```
+
+* AS 'obj_file', 'link_symbol' : for interop to shared libraries.
+* TRANSFORM for mapping types in a programming lang to pg data types.
+* WINDOW functions are extremely powerful and wonderful.
+  * must be written in C.
+
+* COST
+
+For explain to know the cost of a query it needs to know the cost of a function.
+If you don't specify the cost when you declare a function then pg uses a default cost of 100.
+It's good to specify a realistic cost on a function so that the query optimizer can
+avoid costly functions where it can.
+
+STABLE functions are functions that read from the database. They do not modify the database,
+they do not change other state, they maybe read from the database and do some evaluation
+on that.
+
+In the `CREATE FUNCTION` declaration you must declare whether it is `IMMUTABLE`, `STABLE`, `VOLATILE`
+otherwise it will use the default of `VOLATILE`. This is relavent for performance.
+Choosing the proper volatility will impact performance.
+
+```sql
+SELECT pi(); # immutable
+SELECT random(); # volatile. not stable returns different values each time.
+
+# explain select pi() from test;
+                          QUERY PLAN
+--------------------------------------------------------------
+ Seq Scan on test  (cost=0.00..96922.56 rows=6291456 width=8)
+(1 row)
+
+# explain select random() from test;
+                          QUERY PLAN
+---------------------------------------------------------------
+ Seq Scan on test  (cost=0.00..112651.20 rows=6291456 width=8)
+(1 row)
+
+
+# pi() is called once because of immutable volatility
+
+# explain (VERBOSE) select pi() from test;
+                             QUERY PLAN
+---------------------------------------------------------------------
+ Seq Scan on public.test  (cost=0.00..96922.56 rows=6291456 width=8)
+   Output: '3.14159265358979'::double precision
+
+# random() is called once for each row because of volatile volatility.
+
+# explain (VERBOSE) select random() from test;
+                              QUERY PLAN
+----------------------------------------------------------------------
+ Seq Scan on public.test  (cost=0.00..112651.20 rows=6291456 width=8)
+   Output: random()
+```
+
+### Function inlining:
+
+* Only works for SQL language functions.
+
+```sql
+CREATE FUNCTION addon(integer) RETURNS integer LANGUAGE sql AS 'SELECT $1 + 1';
+# $1 for first unnamed argument
+
+EXPLAIN (VERBOSE) SELECT addone(id::integer) FROM test;
+```
+
+Optimizer can use the inline function declaration and optimize it.
+
+### Triggers
+
+A trigger in pg works with two objects.
+
+* First is a trigger function. (something that `RETURNS trigger`. no real meaning just syntax stuff)
+
+```sql
+# \h CREATE TRIGGER
+Command:     CREATE TRIGGER
+Description: define a new trigger
+Syntax:
+CREATE [ CONSTRAINT ] TRIGGER name { BEFORE | AFTER | INSTEAD OF } { event [ OR ... ] }
+    ON table_name
+    [ FROM referenced_table_name ]
+    [ NOT DEFERRABLE | [ DEFERRABLE ] [ INITIALLY IMMEDIATE | INITIALLY DEFERRED ] ]
+    [ REFERENCING { { OLD | NEW } TABLE [ AS ] transition_relation_name } [ ... ] ]
+    [ FOR [ EACH ] { ROW | STATEMENT } ]
+    [ WHEN ( condition ) ]
+    EXECUTE PROCEDURE function_name ( arguments )
+
+where event can be one of:
+
+    INSERT
+    UPDATE [ OF column_name [, ... ] ]
+    DELETE
+    TRUNCATE
+```
+
+* `{ BEFORE | AFTER | INSTEAD OF }`: When to run the trigger.
+  * sometimes you want a trigger to modify the data or add a default value.
+  * `BEFORE` trigger
+    * can modify the data before they hit the table.
+    * can also cancel the action by erroring out before the insert or update.
+  * `AFTER` trigger
+    * Useful for `DEFERRABLE` functions. Can delay the execution of the trigger to the end of the transaction.
+* `ROW` and `STATEMENT` level triggers.
+  * for each row. gives you the affected row.
+  * or for each statement. doesn't give you the affected row(s)
+  * Transition tables are something that you can use in statement level triggers.
+    * You get both the old and new table of rows in the function.
+    * Can build a safe guard to not allow deletes more than 5 rows.
+
+```sql
+CREATE TABLE realdata (
+  id bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL,
+  value text,
+  valid tstzrange DEFAULT tstzrange(current_timestamp, NULL) NOT NULL,
+  EXCLUDE USING gist (valid WITH &&, id WITH =) # with overlap and equal
+)
+
+CREATE VIEW data AS SELECT id, value FROM realdata WHERE valid @> current_timestamp;
+```
+
+```sql
+SELECT '2020-01-01'::timestamp WITH TIME ZONE;
+SELECT '2020-01-01'::timestampz;
+
+CREATE TABLE aside(x timestamp with time zone);
+INSERT INTO aside VALUES ('2020-01-01 00:00:00');
+SHOW timezone;
+SET timezone = 'Europe/Vienna';
+```
+
+timestamps stored in utc as an 8 byte integer.
+timestampz will convert to the timezone parameter.
+
+```sql
+# \dx
+                                    List of installed extensions
+  Name   | Version |   Schema   |                            Description
+---------+---------+------------+-------------------------------------------------------------------
+ citext  | 1.4     | public     | data type for case-insensitive character strings
+ pg_trgm | 1.3     | public     | text similarity measurement and index searching based on trigrams
+ plpgsql | 1.0     | pg_catalog | PL/pgSQL procedural language
+
+
+\e -- open editor
+-- PL/pgSQL is a rip-off of plsql from oracle.
+CREATE FUNCTION data_trig() RETURNS trigger LANGUAGE plpgsql
+AS $$
+BEGIN -- not same as starting a transaction. this is the start of a plpgsql statement.
+  CASE TG_OP -- variable that available in a trigger function.
+    WHEN 'INSERT' THEN
+      IF NEW.id IS NULL THEN
+        INSERT INTO realdata (value) VALUES (NEW.value);
+      ELSE
+        INSERT INTO realdata (id, value) VALUES (NEW.id, NEW.value);
+      END IF;
+
+      RETURN NEW;
+    WHEN 'DELETE' THEN
+      UPDATE realdata SET valid = tstzrange(lower(valid), current_timestamp)
+      WHERE id = OLD.id AND valid @> TIMESTAMPZ 'infinity';
+
+      RETURN OLD;
+    WHEN 'UPDATE' THEN
+      UPDATE realdata SET valid = tstzrange(lower(valid), current_timestamp)
+      WHERE id = OLD.id AND valid @> TIMESTAMPZ 'infinity';
+
+      INSERT INTO realdata (id, value) VALUES (NEW.id, NEW.value);
+
+      RETURN NEW;
+  END CASE;
+END;
+$$;
+
+CREATE TRIGGER data_trig INSTEAD OF INSERT OR UPDATE OR DELETE ON data
+FOR EACH ROW EXECUTE PROCEDURE data_trig();
+
+INSERT INTO data (value) VALUES ('first');
+
+TABLE data;
+
+UPDATE data SET value = 'changed' WHERE id = 1;
+
+TABLE realdata;
+
+SELECT id, value FROM realdata WHERE valid @> '2020-04-29 17:18:37';
+```
+
+[TG_OP](https://www.postgresql.org/docs/11/plpgsql-trigger.html)
+  * `NEW`
+  * `OLD`
+Depending on the context you will have access to different globals in the context of the
+function.
