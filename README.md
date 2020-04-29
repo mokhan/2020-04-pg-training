@@ -1845,3 +1845,86 @@ Syntax:
 REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] name
     [ WITH [ NO ] DATA ]
 ```
+
+## Procedures
+
+Procedures do not return anything.
+Only added in pg 11.
+* can commit and rollback transactions and support is very limited and very early stages. lots of limitations.
+
+You cannot use a savepoint in a function or procedure but you can do something equivalent.
+
+```sql
+BEGIN;
+  BEGIN
+    -- possible error here
+
+  EXCEPTION -- implicit rollback to savepoint
+    WHEN division_by_zero THEN
+    --- exception handling code
+  END;
+END;
+```
+
+## Architecture of postgres for performance
+
+* Each client connection produces an process.
+```bash
+モ ps | grep postgres
+|       \_ postgres -F -D /home/mokha/development/2020-04-pg-training/db/data -k /home/mokha/development/2020-04-pg-training/tmp/sockets
+|           \_ postgres: logger process
+|           \_ postgres: checkpointer process
+|           \_ postgres: writer process
+|           \_ postgres: wal writer process
+|           \_ postgres: autovacuum launcher process
+|           \_ postgres: stats collector process
+|           \_ postgres: bgworker: logical replication launcher
+|           \_ postgres: mokha course [local] idle
+|       \_ psql -h /home/mokha/development/2020-04-pg-training/tmp/sockets postgres
+```
+
+![architecture](architecture.png)
+
+* every process that looks for a block.
+* find a free space in shared buffers.
+
+```text
+    ------------
+    | backends |
+    ------------
+         |
+         |-------------|
+                       | make change in wal before change is accepted in the system.
+-------------------------------
+| shared buffers  | wal buffer|
+| --------------  |------------
+| |copy of block| | lock |   |
+| --------------  |-------   |
+|                 |          |
+|                 |          |
+|                 |          | wal writer
+-------------------          |
+        |                    |
+        V                    V
+   -------------      ------------- WAL ----
+   | disk      |      |                    |
+   |           |      |                    |
+   | 8k blocks |      ----------------------
+   -------------
+       A
+       |
+    -----------
+    | bg writer |
+     ----------
+       |
+       |
+---------------
+| checkpointer | every 5 minutes pull from shared buffers and clean dirty buffers
+---------------
+```
+
+* we could write every block to disk every time we get it. bad perf
+* we also want to commit to disk
+* transaction log -> wal -> write ahead log
+* read the block from shared buffers.
+* the transaction log is used to repair a database after a crash.
