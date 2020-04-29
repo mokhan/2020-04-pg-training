@@ -1788,3 +1788,60 @@ SELECT id, value FROM realdata WHERE valid @> '2020-04-29 17:18:37';
   * `OLD`
 Depending on the context you will have access to different globals in the context of the
 function.
+
+```sql
+-- describe operator
+# \do @>
+                               List of operators
+   Schema   | Name | Left arg type | Right arg type | Result type | Description
+------------+------+---------------+----------------+-------------+-------------
+ pg_catalog | @>   | aclitem[]     | aclitem        | boolean     | contains
+ pg_catalog | @>   | anyarray      | anyarray       | boolean     | contains
+ pg_catalog | @>   | anyrange      | anyelement     | boolean     | contains
+ pg_catalog | @>   | anyrange      | anyrange       | boolean     | contains
+ pg_catalog | @>   | box           | box            | boolean     | contains
+ pg_catalog | @>   | box           | point          | boolean     | contains
+ pg_catalog | @>   | circle        | circle         | boolean     | contains
+ pg_catalog | @>   | circle        | point          | boolean     | contains
+ pg_catalog | @>   | jsonb         | jsonb          | boolean     | contains
+ pg_catalog | @>   | path          | point          | boolean     | contains
+ pg_catalog | @>   | polygon       | point          | boolean     | contains
+ pg_catalog | @>   | polygon       | polygon        | boolean     | contains
+ pg_catalog | @>   | tsquery       | tsquery        | boolean     | contains
+
+-- source of function
+ \sf trig
+```
+
+```sql
+\h CREATE EVENT TRIGGER
+```
+
+## Views
+
+Postgres wont let you drop a table if a view depends on it. pg tracks
+dependencies to make sure that you don't break the consistency of the database.
+
+Renaming a table will also update the reference to the table name in the view.
+
+You can use a trigger to keep a materialized view current.
+
+```sql
+# \h CREATE MATERIALIZED VIEW
+Command:     CREATE MATERIALIZED VIEW
+Description: define a new materialized view
+Syntax:
+CREATE MATERIALIZED VIEW [ IF NOT EXISTS ] table_name
+    [ (column_name [, ...] ) ]
+    [ WITH ( storage_parameter [= value] [, ... ] ) ]
+    [ TABLESPACE tablespace_name ]
+    AS query
+    [ WITH [ NO ] DATA ]
+
+# \h REFRESH MATERIALIZED VIEW
+Command:     REFRESH MATERIALIZED VIEW
+Description: replace the contents of a materialized view
+Syntax:
+REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] name
+    [ WITH [ NO ] DATA ]
+```
