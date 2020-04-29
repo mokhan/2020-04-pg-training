@@ -1949,3 +1949,67 @@ Without an explicit transaction then it will create an implicit
 transaction for each insert statement which will call `fsync`
 for each transaction which is slow and will bottleneck on I/O.
 It's better to wrap in a transaction to fsync once rather than 30K times.
+
+
+## Data directory tour
+
+* base: default table space. actual data is stored here
+  * 1
+  * 13880 : object id of database
+  * 13881 : object id of database
+  * 16384 : object id of `course` database
+    * `*_fsm` free space map file
+    * `*_vm` file is.
+  * pgsql_tmp
+* postgresql.conf
+  * global settings or default values.
+  * `ALTER SYSTEM SET enable_seqscan = off;`
+    * this updates the `postgresql.auto.conf`
+
+## Configuration
+
+* `shared_buffers = 128MB` is the default. This is too small and perf will suck.
+  * how big? no single good answer.
+    * start with 1/4 of available RAM but not more than 8GB.
+    * 8GB is max because we also have the file system cache on top of that.
+    * You might run into double cache if you choose a higher cache size because you will have a shared buffer cache and a file system cache.
+
+```sql
+CREATE EXTENSION pg_buffercache;
+
+\d pg_buffercache;
+
+SELECT usagecount, count(*)
+FROM pg_buffercache GROUP BY 1 ORDER BY 1;
+```
+
+* `huge_pages = try` is good to use on linux.
+* `work_mem`
+
+
+```sql
+CREATE TABLE mem (id serial, name text);
+
+INSERT INTO mem (name) SELECT 'carl' FROM generate_series(1, 100000);
+INSERT INTO mem (name) SELECT 'paul' FROM generate_series(1, 100000);
+
+ANALYZE mem;
+VACUUM mem;
+
+EXPLAIN SELECT name, count(*) FROM mem GROUP BY name;
+SET max_parallel_workers_per_gather = 0;
+EXPLAIN SELECT name, count(*) FROM mem GROUP BY name;
+
+EXPLAIN id, count(*) FROM mem GROUP BY id;
+
+SET work_mem = '1GB';
+
+-- now same query can use HashAggregate which is faster.
+EXPLAIN id, count(*) FROM mem GROUP BY id;
+```
+
+* HashAggregate: piece of paper with two sections. Do a sequential scan and make a tick on the left and on the right.
+* GroupAggregate: hash wouldn't fit in work mem so move to group. Sort them then count them as they pass by.
+
+Larger `work_mem` can make some queries operate faster.
+Sorting rows in memory is faster than having to spill to disk.
