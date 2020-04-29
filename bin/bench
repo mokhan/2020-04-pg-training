@@ -1,0 +1,5 @@
+#!/bin/sh
+
+pgbench -h $PWD/tmp/sockets -i -s 100 course
+pgbench -h $PWD/tmp/sockets -c 10 -T 30 course
+# pgbench -h $PWD/tmp/sockets -C -c 10 -T 30 course

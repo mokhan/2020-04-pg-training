@@ -2031,6 +2031,7 @@ Try to keep `max_connections` down. How? use a connection pooler
 
 
 ```text
+------------------
 | app | app | app |
 ------------------
 | pool|pool| pool | <- not needed anymore with a connection pooler
@@ -2038,11 +2039,23 @@ Try to keep `max_connections` down. How? use a connection pooler
  | | | | | | | | |
  | | | | | | | | |
 ---------------------
-| connection pooler | <- re-use connections
+| connection pooler | <- re-use connections (pgbouncer)
 ---------------------
      | | |
      | | |
    ----------
    |   db   | <- limit the # of connections
    ----------
+```
+
+* You don't want more processes than CPU cores. CPU bound.
+* You don't want more `work_mem` * `max_connections` to be more than the available RAM.
+
+## pgbench
+
+```bash
+$ pgbench -h $PWD/tmp/sockets -i -s 100 dbname
+$ pgbench -c 10 -T 30
+# simulate an application that opens and closes connections constantly
+$ pgbench -C -c 10 -T 30
 ```
