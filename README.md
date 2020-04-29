@@ -1986,6 +1986,8 @@ FROM pg_buffercache GROUP BY 1 ORDER BY 1;
 * `huge_pages = try` is good to use on linux.
 * `work_mem` default is 4MB.
 * `max_connections` has a default of 100. This can be a rather high default.
+* `synchronous_commit = on` default is `on`. Setting it to `off` means not every commit will flush to the transaction log.
+* `commit_delay` default to `0`. Can be used to batch transaction to log. Will wait 5 seconds to see what else needs to be flushed and flush them together. Does make transactions a little bit longer.
 
 ```text
 RAM >= shared_buffers + (work_mem * max_connections)
