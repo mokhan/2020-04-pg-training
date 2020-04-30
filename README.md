@@ -2255,6 +2255,9 @@ Obstacles:
 * authentation (pg_hba.conf)
 * database
 * schema (create, usage)
+* tables
+* columns
+* row level security
 
 ![obstacles](obstacles.png)
 
@@ -2349,3 +2352,73 @@ ACL access controll list
 * =UC/postgres
 	* space before `=` means it is granted to everybody.
 
+```sql
+# \dnS
+      List of schemas
+        Name        | Owner
+--------------------+-------
+ information_schema | mokha
+ pg_catalog         | mokha
+ pg_temp_1          | mokha
+ pg_toast           | mokha
+ pg_toast_temp_1    | mokha
+ public             | mokha
+(6 rows)
+
+TABLE pg_attribute;
+```
+
+* pg_catalog:
+* information_schema:
+  * includes metadata of the db in a user friendly way.
+
+One way is to always fully qualify objects. Another way is to never do it
+and control the search path.
+
+```sql
+# CREATE SCHEMA myapp;
+# CREATE TABLE myapp.new (x inet);
+# SHOW search_path;
+   search_path
+   -----------------
+    "$user", public
+    (1 row)
+
+SET search_path = myapp, public;
+```
+
+```sql
+\h GRANT
+GRANT SELECT ON account TO logistics;
+\dp -- to view view privileges
+# \dp account
+                              Access privileges
+ Schema |  Name   | Type  | Access privileges | Column privileges | Policies
+--------+---------+-------+-------------------+-------------------+----------
+ public | account | table |                   |                   |
+
+# \dp account
+                                  Access privileges
+ Schema |  Name   | Type  |     Access privileges     | Column privileges | Policies
+--------+---------+-------+---------------------------+-------------------+----------
+ public | account | table | postgres=arwdDxt/postgres+|                   |
+        |         |       | logistics=r/postgres      |                   |
+(1 row)
+
+SELECT * FROM aclexplode('{postgres=arwdDxt/postgres}');
+# SELECT * FROM aclexplode('{postgres=arwdDxt/postgres}');
+ grantor | grantee | privilege_type | is_grantable
+---------+---------+----------------+--------------
+      10 |      10 | INSERT         | f
+      10 |      10 | SELECT         | f
+      10 |      10 | UPDATE         | f
+      10 |      10 | DELETE         | f
+      10 |      10 | TRUNCATE       | f
+      10 |      10 | REFERENCES     | f
+      10 |      10 | TRIGGER        | f
+(7 rows)
+```
+
+* don't use `*` in `SELECT * from table JOIN b;` be explicit about the columns to fetch.
+* `SELECT count(*) FROM a` == `SELECT count() FROM`
+* `SELECT count(1)` is worse performance than `SELECT count(*)`
