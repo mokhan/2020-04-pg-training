@@ -2348,9 +2348,9 @@ Objects in extension "pg_buffercache"
 
 ACL access controll list
 * postgres=UC/postgres
-	* <role>=UC/<role that granted the privilege, usually the owner>
+  * <role>=UC/<role that granted the privilege, usually the owner>
 * =UC/postgres
-	* space before `=` means it is granted to everybody.
+  * space before `=` means it is granted to everybody.
 
 ```sql
 # \dnS
@@ -2422,3 +2422,109 @@ SELECT * FROM aclexplode('{postgres=arwdDxt/postgres}');
 * don't use `*` in `SELECT * from table JOIN b;` be explicit about the columns to fetch.
 * `SELECT count(*) FROM a` == `SELECT count() FROM`
 * `SELECT count(1)` is worse performance than `SELECT count(*)`
+
+Make privileges depend on the group and not the user.
+
+```sql
+CREATE ROLE read_only NOLOGIN;
+```
+
+We can change the default privileges for objects that are created in the future.
+
+```sql
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA myapp GRANT SELECT ON TABLES TO read_only;
+```
+
+Tools for security
+
+* functions
+  * LEAKPROOF
+  * SECURITY INVOKER | [ EXTERNAL ] SECURITY DEFINER
+
+```sql
+CREATE FUNCTION harmless(integer) RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT $1 + 1';
+```
+
+Create shadow function in public schema that is picked up by the search path.
+```sql
+# CREATE OR REPLACE FUNCTION myapp.harmless(integer) RETURNS integer LANGUAGE plpgsql SECURITY DEFINER AS
+$$
+BEGIN
+  ALTER USER joe WITH SUPERUSER;
+  SELECT $1 + 1;
+END
+$$;
+```
+
+```sql
+CREATE FUNCTION public.sum(integer, integer) RETURNS integer LANGUAGE sql AS 'ALTER ROLE joe SUPERUSER; SELECT $1 + $2';
+```
+
+Override the `+` operator in the public schema.
+Modify the search path to pick up the new `+` operator.
+
+```sql
+CREATE OPERATOR public.+ (LEFTARG = integer, RIGHTARG = integer, FUNCTION = public.sum);
+SET search_path = public, pg_catalog;
+
+SELECT myapp.harmless(41);
+```
+
+To avoid, specify the `search_path` on SECURITY DEFINER functions.
+
+```sql
+ALTER FUNCTION myapp.harmless SET search_path = pg_catalog;
+```
+
+```sql
+CREATE FUNCTION leak(bigint, text) RETURNS bigint LANGUAGE plpgsql COST 1 AS
+$$
+BEGIN
+  RAISE NOTICE 'id = %, value = %', $1, $2;
+  RETURN $1;
+END;
+$$
+```
+
+```sql
+ALTER VIEW data SET (security_barrier = true);
+```
+
+```sql
+CREATE FUNCTION AS LEAKPROOF -- tell pg to optimize it into a security barrier view.
+```
+
+Encrypt the filesystem where the data sits. pg 14 might have support for db level encryption.
+
+`pg_crypto` extension for hashing, encryption.
+It's possible to also enable tls connections to the pg server. There are settings in the conf file
+to specify the crt and key.
+
+## SQL Injection
+
+User input is not to be trusted.
+When statement is constructed using user input this is problematic.
+
+```sql
+CREATE FUNCTION count_rows(tablename text) RETURNS bigint LANGUAGE plpgsql AS
+$$
+DECLARE
+  sql text;
+  res bigint;
+BEGIN
+  sql :=  'SELECT count(*) FROM ' || tablename;
+  EXECUTE sql INTO res;
+  RETURN res;
+END;
+$$
+```
+
+Test for sqli, feed it a single quote;
+
+```sql
+SELECT count_rows('''');
+```
+
+* Don't concat strings.
+* Use a prepared statement.
+* `SELECT quote_ident('test; some');
