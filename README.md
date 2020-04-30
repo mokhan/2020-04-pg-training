@@ -2061,3 +2061,291 @@ $ pgbench -c 10 -T 30
 # simulate an application that opens and closes connections constantly
 $ pgbench -C -c 10 -T 30
 ```
+
+## Security
+
+Users permissions and related things.
+`postgres` user is a `SUPERUSER` they can do anything. It's like the
+root user in unix systems. Permissions are inspired by file system
+permissions. pg doesn't have users it has roles.
+
+A role is a user and a user group. There is no difference.
+Some roles are `LOGIN` roles and some are not.
+
+```sql
+# \h CREATE ROLE
+Command:     CREATE ROLE
+Description: define a new database role
+Syntax:
+CREATE ROLE name [ [ WITH ] option [ ... ] ]
+
+where option can be:
+
+      SUPERUSER | NOSUPERUSER
+    | CREATEDB | NOCREATEDB
+    | CREATEROLE | NOCREATEROLE
+    | INHERIT | NOINHERIT
+    | LOGIN | NOLOGIN
+    | REPLICATION | NOREPLICATION
+    | BYPASSRLS | NOBYPASSRLS
+    | CONNECTION LIMIT connlimit
+    | [ ENCRYPTED ] PASSWORD 'password'
+    | VALID UNTIL 'timestamp'
+    | IN ROLE role_name [, ...]
+    | IN GROUP role_name [, ...]
+    | ROLE role_name [, ...]
+    | ADMIN role_name [, ...]
+    | USER role_name [, ...]
+    | SYSID uid
+```
+
+```sql
+# \h CREATE USER
+Command:     CREATE USER
+Description: define a new database role
+Syntax:
+CREATE USER name [ [ WITH ] option [ ... ] ]
+
+where option can be:
+
+      SUPERUSER | NOSUPERUSER
+    | CREATEDB | NOCREATEDB
+    | CREATEROLE | NOCREATEROLE
+    | INHERIT | NOINHERIT
+    | LOGIN | NOLOGIN
+    | REPLICATION | NOREPLICATION
+    | BYPASSRLS | NOBYPASSRLS
+    | CONNECTION LIMIT connlimit
+    | [ ENCRYPTED ] PASSWORD 'password'
+    | VALID UNTIL 'timestamp'
+    | IN ROLE role_name [, ...]
+    | IN GROUP role_name [, ...]
+    | ROLE role_name [, ...]
+    | ADMIN role_name [, ...]
+    | USER role_name [, ...]
+    | SYSID uid
+```
+
+Create user is the same as create role except that it will create it
+with `LOGIN`.
+
+3 things that roles can be:
+
+* SUPERUSER
+* CREATEDB
+* CREATEROLE
+
+Don't use a super user for an application. `SUPERUSER` is meant
+to be use for admistration. Limit the use of `SUPERUSER`.
+You can specify a connection limit for a user.
+You can expire an account at some timestamp.
+
+```sql
+# not smart to specify a password like this.
+# it will be stored in psql history file.
+# it will be sent in clear text to server.
+# We don't know what statements will end up in the database log.
+CREATE ROLE joe LOGIN PASSWORD 'secret';
+```
+
+```sql
+- create user without password.
+CREATE ROLE joe LOGIN;
+```
+
+Storing passwords in the database is not great security.
+You can tell pg to use an external authority server.
+
+* kerberos
+* radius
+
+Use `\password` command. This is more secure.
+
+```psql
+\password joe
+```
+
+```sql
+CREATE ROLE logistics;
+GRANT logistics TO JOE;
+# \du
+                                    List of roles
+ Role name |                         Attributes                         |  Member of
+-----------+------------------------------------------------------------+-------------
+ joe       |                                                            | {logistics}
+ logistics | Cannot login                                               | {}
+ mokha     | Superuser, Create role, Create DB, Replication, Bypass RLS | {}
+```
+
+Each database object has an owner.
+
+```sql
+# \dt
+             List of relations
+ Schema |       Name       | Type  | Owner
+--------+------------------+-------+-------
+ public | account          | table | mokha
+ public | guard_on_duty    | table | mokha
+ public | pgbench_accounts | table | mokha
+ public | pgbench_branches | table | mokha
+ public | pgbench_history  | table | mokha
+ public | pgbench_tellers  | table | mokha
+ public | waltest          | table | mokha
+```
+
+Only owner may alter an object. Only an owner may drop an object.
+Owner can delegating granting priviliges. This is a great way
+to lose control of your db.
+
+There are also system users and groups. They start with `pg_` prefix.
+
+```sql
+# \duS+
+List of roles
+-[ RECORD 1 ]-------------------------------------------------------------
+Role name   | joe
+Attributes  |
+Member of   | {logistics}
+Description |
+-[ RECORD 2 ]-------------------------------------------------------------
+Role name   | logistics
+Attributes  | Cannot login
+Member of   | {}
+Description |
+-[ RECORD 3 ]-------------------------------------------------------------
+Role name   | mokha
+Attributes  | Superuser, Create role, Create DB, Replication, Bypass RLS
+Member of   | {}
+Description |
+-[ RECORD 4 ]-------------------------------------------------------------
+Role name   | pg_monitor
+Attributes  | Cannot login
+Member of   | {pg_read_all_settings,pg_read_all_stats,pg_stat_scan_tables}
+Description |
+-[ RECORD 5 ]-------------------------------------------------------------
+Role name   | pg_read_all_settings
+Attributes  | Cannot login
+Member of   | {}
+Description |
+-[ RECORD 6 ]-------------------------------------------------------------
+Role name   | pg_read_all_stats
+Attributes  | Cannot login
+Member of   | {}
+Description |
+-[ RECORD 7 ]-------------------------------------------------------------
+Role name   | pg_signal_backend
+Attributes  | Cannot login
+Member of   | {}
+Description |
+-[ RECORD 8 ]-------------------------------------------------------------
+Role name   | pg_stat_scan_tables
+Attributes  | Cannot login
+Member of   | {}
+Description |
+
+# SHOW data_directory;
+                   data_directory
+-----------------------------------------------------
+ /home/mokha/development/2020-04-pg-training/db/data
+```
+
+Obstacles:
+
+* listen addresses
+* authentation (pg_hba.conf)
+* database
+* schema (create, usage)
+
+![obstacles](obstacles.png)
+
+
+Default listen address is on loopback interface.
+
+```sql
+# SHOW listen_addresses;
+ listen_addresses
+------------------
+ localhost
+(1 row)
+```
+
+To change the listen address change in the postgresqlconf
+
+`listen_adresses = '*'`
+
+```bash
+psql -h 64.225.109.133 -U joe course
+```
+
+To turn on authentication:
+
+* pg_hba.conf
+  * list of
+
+```bash
+cat pg_hba.conf
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# "local" is for Unix domain socket connections only
+local   all             all                                     trust
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            trust
+# IPv6 local connections:
+host    all             all             ::1/128                 trust
+# Allow replication connections from localhost, by a user with the
+# replication privilege.
+local   replication     all                                     trust
+host    replication     all             127.0.0.1/32            trust
+host    replication     all             ::1/128                 trust
+```
+
+pg reads ^ that file from top to bottom to see what matches when a
+client connects. `trust` mean no password is needed for `local all`.
+`peer` only for local, like `trust` but the pg user needs to match the
+operating system user.
+
+```text
+host course joe 0.0.0.0/0 md5 # add this entry above other.
+``
+
+```bash
+pg_ctl -D var/lib.../data -l logfile reload # to reload the pg_hba.conf file
+```
+
+```sql
+# \dn
+  List of schemas
+  Name  |  Owner
+--------+----------
+ myapp  | postgres
+ public | postgres
+(2 rows)
+```
+
+* To use an object in a schema you need the usage privilege.
+
+```sql
+# \dx+ pg_buffercache ;
+Objects in extension "pg_buffercache"
+       Object description
+---------------------------------
+ function pg_buffercache_pages()
+ view pg_buffercache
+(2 rows)
+
+# \dn+
+                          List of schemas
+  Name  |  Owner   |  Access privileges   |      Description
+--------+----------+----------------------+------------------------
+ myapp  | postgres |                      |
+ public | postgres | postgres=UC/postgres+| standard public schema
+        |          | =UC/postgres         |
+(2 rows)
+```
+
+ACL access controll list
+* postgres=UC/postgres
+	* <role>=UC/<role that granted the privilege, usually the owner>
+* =UC/postgres
+	* space before `=` means it is granted to everybody.
+
