@@ -2527,4 +2527,114 @@ SELECT count_rows('''');
 
 * Don't concat strings.
 * Use a prepared statement.
-* `SELECT quote_ident('test; some');
+* `SELECT quote_ident('test; some');`
+
+
+## partitions
+
+* table is like a file in storage.
+
+```text
+partition table. (kind of like a table, no actual data in it. data stored in partitions)
+-------------|    ----------
+|            |    | part 1 |
+|            |    ----------
+|            |
+|            |    ----------
+|            |    | part 2 |
+|            |    ----------
+|            |
+|            |    ----------
+|            |    | part 3 |
+|            |    ----------
+|            |
+--------------
+
+partition key chooses which partition is chosen.
+```
+
+In pg each partition is like a table.
+
+* paritioning in a new version of pg and entered in pg10.
+* if you want parititioning then use pg12. perf better in pg12.
+
+partitioning:
+
+* range partitioning:
+  * range of time or other ranges.
+  * partition cannot overlap.
+* list partitioning:
+  * partition by customer.
+* hash partitioning:
+  * hash function on partition key -> out comes a integer then take a modulus of total partitions then spread across partitions.
+  * spread io randomly across devices.
+
+Create the partition table
+
+```sql
+CREATE TABLE part (
+  id bigint NOT NULL,
+  created_at timestamp with time zone NOT NULL,
+  data text
+) PARTITION BY RANGE (created_at); -- partition by range using created at
+
+# INSERT INTO part VALUES (1, current_timestamp, 'something');
+ERROR:  23514: no partition of relation "part" found for row
+DETAIL:  Partition key of the failing row contains (created_at) = (2020-04-30 11:10:56.799605-06).
+
+-- need to specify partitions
+CREATE TABLE part_2018 PARTITION OF part FOR VALUES FROM ('2018-01-01 00:00:00') TO ('2019-01-01 00:00:00');
+CREATE TABLE part_2019 PARTITION OF part FOR VALUES FROM ('2019-01-01 00:00:00') TO ('2020-01-01 00:00:00');
+CREATE TABLE part_2020 PARTITION OF part FOR VALUES FROM ('2020-01-01 00:00:00') TO ('2021-01-01 00:00:00');
+CREATE TABLE part_2021 PARTITION OF part FOR VALUES FROM ('2021-01-01 00:00:00') TO ('2022-01-01 00:00:00');
+\d+ part
+
+# INSERT INTO part VALUES (1, current_timestamp, 'something');
+INSERT 0 1
+
+# TABLE part;
+ id |          created_at           |   data
+ ----+-------------------------------+-----------
+   1 | 2020-04-30 11:13:54.158917-06 | something
+
+-- you can also create a default partition for everything that doesn't fit anywhere else
+CREATE TABLE part_default PARTITION OF part DEFAULT;
+
+ALTER TABLE part DETACH PARTITION part_2018;
+
+INSERT INTO part SELECT i, TIMESTAMPTZ '2019-12-30 00:00:00' + i * INTERVAL '1 day', 'whatever' FROM generate_series(1, 400) AS i;
+
+# EXPLAIN (ANALYZE) SELECT * FROM part where created_at BETWEEN '2019-01-01' AND '2020-01-04';
+SELECT * FROM part where createdat BETWEEN '2019-01-01' AND '2020-01-04';
+                                                                         QUERY PLAN            >
+----------------------------------------------------------------------------------------------->
+ Append  (cost=0.00..34.55 rows=9 width=38) (actual time=0.010..0.087 rows=5 loops=1)
+   ->  Seq Scan on part_2019  (cost=0.00..26.05 rows=5 width=48) (actual time=0.009..0.010 rows>
+         Filter: ((created_at >= '2019-01-01 00:00:00-07'::timestamp with time zone) AND (creat>
+   ->  Seq Scan on part_2020  (cost=0.00..8.50 rows=4 width=25) (actual time=0.006..0.076 rows=>
+         Filter: ((created_at >= '2019-01-01 00:00:00-07'::timestamp with time zone) AND (creat>
+         Rows Removed by Filter: 363
+ Planning time: 0.316 ms
+ Execution time: 0.111 ms
+(8 rows)
+```
+
+Deleting a partition is fast.
+You can create an index for partitioned tables. The query plan will only include partitions
+that matter if the query includes the partition key. Each partition may have a different
+query plan.
+
+```sql
+ALTER TABLE part ADD PRIMARY KEY (id); -- doesn't work because primary key is not part of the partition key
+
+ALTER TABLE part ADD PRIMARY KEY (id, created_at); -- primary key must include partition key.
+```
+
+Planning time increases for queries when using partitions. So there is a cost.
+Each new partition can increase the time to query. Queries that include the partition key
+can reduce the # of partitions to query which is better than needing to find data across
+partitions. vacuuming is easier.
+
+pg doesn't support sharding natively at the moment. A tool that can be used is `pl/proxy`
+until it's implemented natively in postgres. `pl/proxy` was developed by skype people
+for sharding their data. [pl/proxy](https://plproxy.github.io/).
