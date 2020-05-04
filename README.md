@@ -2867,3 +2867,89 @@ FROM (
 WHERE "projects"."id" = 278964
 LIMIT 100
 ```
+
+## pg and rails
+
+Instructor: Carlos from Cybertec Training
+
+```yaml
+# client parameters to use
+default:
+  encoding: unicode
+  variables: # optional hash of variables to use via the SET commands
+  schema_search_path: myapp,sharedapp,public
+```
+
+Review datatypes.
+
+```ruby
+create_table :users do |t|
+  t.string :username
+  t.binary # limited to 1GB in storage, allows non printable characters.
+end
+```
+
+array datatype
+
+example: multiple email addresses for a user
+
+```ruby
+def change
+  add_column :users, :emails, :string, array: true, default: []
+  # character varying[] type in pg
+end
+```
+
+# [insert_all](https://api.rubyonrails.org/classes/ActiveRecord/Persistence/ClassMethods.html#method-i-insert_all)
+
+```ruby
+users = []
+100.times do
+  users << {
+    username: SecureRandom.uuid,
+    emails: ["email#{n}@example.com", "email#{n}+#{n}@example.com"]
+  }
+end
+User.insert_all(users) # uses a single transaction instead of one for each insert.
+
+# ice cream cone operator. contains operator
+User.where("emails @> '{email@example.com}'")
+
+# run explain on the query
+User.where("emails @> '{email@example.com}'").explain
+
+# gist for geometrical data
+# gin designed for arrays
+add_index :users, :emails, using: 'gin'
+
+# jsonb datatype can be indexed
+
+# range datatype in pg is mapped to the ruby range data type.
+
+create_table :events do |t|
+  t.daterange :duration
+  t.timestamps
+end
+
+Event.create(duration: Date.new(2014, 2, 11)..Date.new(2014, 2, 12))
+Event.first.duration # returns a ruby range
+
+Event
+  .select("lower(duration) as starts_at")
+  .select("upper(duration) as ends_at")
+  .first
+
+# using uuid as primary key prevents enumeration attacks that are possible by using an integer id in the url.
+
+create_table :people, id: :uuid do |t|
+  enable_extension 'pgcrypto' # this enables the extension on the db
+
+  t.string :name
+end
+
+# config/initializers/generators.rb
+
+Rails.application.config.generators do |g|
+  g.orm :active_record, primary_key_type: :uuid
+end
+```
