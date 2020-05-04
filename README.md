@@ -2801,3 +2801,39 @@ execution plans.
   * can be used to speed up sorting
 
 ![scan types](scan-types.png)
+
+cost comes from cost of each object.
+
+```sql
+select * from pg_settings where name like '%_cost';
+select reltuples, relpages from pg_class where relname = 'test';
+```
+
+![costs](costs.png)
+
+```sql
+create table large(id integer, x integer);
+INSERT INTO large SELECT i, 1/1000 + 1 FROM generate_series(1, 1000000) as i;
+TABLE large
+
+create table small(x integer);
+insert into small values(1)
+
+ANALYZE small; -- to calculate statistics which can improve query planner like in this case.
+```
+
+* auto analyze happens by the auto vacuum.
+* Look at `autovacuum_analyze_scale_factor` and `autovacuum_analyze_threshold`.
+* with OLTP you want planning time as short as possible.
+* with OLAP you might not mind planning time of 1 minute so that processing time is down from 1 hour to 30 minutes.
+
+```sql
+# \h CREATE STATISTICS
+Command:     CREATE STATISTICS
+Description: define extended statistics
+Syntax:
+CREATE STATISTICS [ IF NOT EXISTS ] statistics_name
+    [ ( statistics_kind [, ... ] ) ]
+    ON column_name, column_name [, ...]
+    FROM table_name
+```
