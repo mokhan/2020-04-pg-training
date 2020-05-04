@@ -2953,3 +2953,22 @@ Rails.application.config.generators do |g|
   g.orm :active_record, primary_key_type: :uuid
 end
 ```
+
+## rails transactions
+
+```ruby
+t.decimal :amount, precision: 10, scale: 2
+
+class Account
+  def withdraw(quantity)
+    self.amount -= quantity
+    save!
+  end
+
+  def deposit(quantity)
+    self.amount += quantity
+  end
+end
+```
+
+Partition data using [pg_party](https://github.com/rkrage/pg_party) gem.
