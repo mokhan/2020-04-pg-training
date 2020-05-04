@@ -2900,7 +2900,7 @@ def change
 end
 ```
 
-# [insert_all](https://api.rubyonrails.org/classes/ActiveRecord/Persistence/ClassMethods.html#method-i-insert_all)
+* [insert_all](https://api.rubyonrails.org/classes/ActiveRecord/Persistence/ClassMethods.html#method-i-insert_all)
 
 ```ruby
 users = []
@@ -2954,7 +2954,7 @@ Rails.application.config.generators do |g|
 end
 ```
 
-## rails transactions
+### rails transactions
 
 ```ruby
 t.decimal :amount, precision: 10, scale: 2
@@ -2971,4 +2971,27 @@ class Account
 end
 ```
 
+### Rails paritioning
+
 Partition data using [pg_party](https://github.com/rkrage/pg_party) gem.
+
+### Rails Scopes
+
+```ruby
+
+# bad
+scope :active -> {
+  includes(:client)
+    .where(active: true)
+    .select { |project| project.client.active? }
+    .sort_by { |project| project.name.downcase }
+}
+
+# scopes should return an ActiveRecord::Relation
+# filter in the database not ruby
+# sort in the database not ruby
+
+# better
+scope :active, -> { where(active: true) .joins(:client) .merge(Client.active) }
+scope :ordered, -> { order('LOWER(name)') }
+```
