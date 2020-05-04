@@ -2638,3 +2638,166 @@ partitions. vacuuming is easier.
 pg doesn't support sharding natively at the moment. A tool that can be used is `pl/proxy`
 until it's implemented natively in postgres. `pl/proxy` was developed by skype people
 for sharding their data. [pl/proxy](https://plproxy.github.io/).
+
+## COPY
+
+```sql
+# \h COPY
+Command:     COPY
+Description: copy data between a file and a table
+Syntax:
+COPY table_name [ ( column_name [, ...] ) ]
+    FROM { 'filename' | PROGRAM 'command' | STDIN }
+    [ [ WITH ] ( option [, ...] ) ]
+
+COPY { table_name [ ( column_name [, ...] ) ] | ( query ) }
+    TO { 'filename' | PROGRAM 'command' | STDOUT }
+    [ [ WITH ] ( option [, ...] ) ]
+
+where option can be one of:
+
+    FORMAT format_name
+    OIDS [ boolean ]
+    FREEZE [ boolean ]
+    DELIMITER 'delimiter_character'
+    NULL 'null_string'
+    HEADER [ boolean ]
+    QUOTE 'quote_character'
+    ESCAPE 'escape_character'
+    FORCE_QUOTE { ( column_name [, ...] ) | * }
+    FORCE_NOT_NULL ( column_name [, ...] )
+    FORCE_NULL ( column_name [, ...] )
+    ENCODING 'encoding_name'
+```
+
+COPY to file or copy from file. COPY runs on the database server.
+This refers to files on the database server which means it requires
+superuser privileges. Most of the time you want to copy files from the client
+via stdin and stdout.
+
+```sql
+COPY reservation to STDOUT;
+
+\COPY reservation to 'clientfile'
+
+\COPY reservation to 'clientfile' (FORMAT 'csv')
+```
+
+## Query Tuning
+
+Start with looking at the statements and try to make it better before
+immediately jumping to scaling.
+
+```psql
+-- deactivated by default. slow query log
+# SHOW log_min_duration_statement ;
+ log_min_duration_statement
+ ----------------------------
+  -1
+```
+
+`pg_statspg_stat_statements` is most important.
+Always activate this in production and is just worth it.
+Hooks into pg server and observes executed statements.
+Need to activate at server start.
+
+```sql
+SHOW shared_preload_libraries ;
+# SHOW shared_preload_libraries ;
+ shared_preload_libraries
+ --------------------------
+
+ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements';
+-- restart server. another reason to due this right at the beginning.
+```
+
+```sql
+SELECT * FROM pg_settings WHERE name LIKE 'pg_stat_statements.%';
+```
+
+set pg_state_statements.track = 'all'
+
+```sql
+-- reset back to 0.
+SELECT pg_stat_statement_reset();
+```
+
+```sql
+\dx pg_stat_statements
+# CREATE EXTENSION pg_stat_statements;
+```
+
+```sql
+SELECT relname, seq_scan, seq_tup_read, seq_tup_read::float8 / seq_scan AS tup_per_scan
+FROM pg_stat_user_tables
+ORDER BY tup_per_scan DESC
+LIMIT 10;
+```
+
+```sql
+\d pg_stat_user_indexes
+
+-- find all indexes that have never been scanned.
+-- candidate indexes for removal.
+SELECT relname, indexrelname, pg_total_relation_size(indexrelid)
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+ORDER BY 3 DESC;
+```
+
+```sql
+EXPLAIN SELECT * FROM pg_stats;
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM pg_stats;
+```
+* cost are #'s pg comes up with
+* estimated rows
+* width in bytes
+
+* actual
+  * actual time
+  * actual rows returned
+  * loops: ?
+    * loops * time = actual time
+
+* buffers
+  * hit: blocks read. if it touches lots of blocks then it is probably slow.
+  * read: from io
+  * dirtied:
+
+* if estimates are close to actual that is good.
+
+Use [https://explain.depesz.com](https://explain.depesz.com) to format
+execution plans.
+
+### Nested Loop join
+
+* How does it work?
+  * Well... nested loops.
+* When is it good?
+  * when the outer table is small.
+* Do indexes help?
+  * Helps for the inner table
+
+## Hash join
+
+* How does it work?
+  * sequential scan on inner table
+    * builds a hash table hash(join condition) a little more prep work for inner scan.
+  * seq scan on outer table and probe the hash.
+* When is it good?
+  * for bigger tables
+  * when hash fits into `work_mem`
+* Do indexes help?
+  * wont impact or help
+
+## Merge join
+
+* How does it work?
+  * sort both tables according to join condition
+  * scan and join results from both sides
+* When is it good?
+  * good for large tables (too big for work mem)
+* Do indexes help?
+  * can be used to speed up sorting
+
+![scan types](scan-types.png)
