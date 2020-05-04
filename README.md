@@ -2837,3 +2837,33 @@ CREATE STATISTICS [ IF NOT EXISTS ] statistics_name
     ON column_name, column_name [, ...]
     FROM table_name
 ```
+
+* (problem query)[https://gitlab.com/snippets/1973130]
+
+```sql
+SELECT 1 as one
+FROM (
+        (SELECT "projects".*
+         FROM "projects"
+         WHERE "projects"."namespace_id" IN
+             (WITH RECURSIVE "base_and_descendants" AS (
+                                                          (SELECT "namespaces".*
+                                                           FROM "namespaces"
+                                                           WHERE "namespaces"."id" IN
+                                                               (SELECT "elasticsearch_indexed_namespaces"."namespace_id"
+                                                                FROM "elasticsearch_indexed_namespaces"))
+                                                        UNION
+                                                          (SELECT "namespaces".*
+                                                           FROM "namespaces",
+                                                                "base_and_descendants"
+                                                           WHERE "namespaces"."parent_id" = "base_and_descendants"."id")) SELECT "id"
+              FROM "base_and_descendants" AS "namespaces"))
+      UNION
+        (SELECT "projects".*
+         FROM "projects"
+         WHERE "projects"."id" IN
+             (SELECT "elasticsearch_indexed_projects"."project_id"
+              FROM "elasticsearch_indexed_projects"))) projects
+WHERE "projects"."id" = 278964
+LIMIT 100
+```
